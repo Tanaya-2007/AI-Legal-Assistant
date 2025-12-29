@@ -8,15 +8,14 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
+# Copy everything from backend folder
 COPY . .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
+# Start uvicorn (adjust path if your main.py is in app/ folder)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
