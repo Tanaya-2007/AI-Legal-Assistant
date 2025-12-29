@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ocrText, setOcrText] = useState<string>("");
+  const BACKEND_URL = "ai-legal-assistant-production.up.railway.app";
 
   // Auth state listener
   useEffect(() => {
@@ -32,7 +33,6 @@ const App: React.FC = () => {
     }
   };
 
-  const BACKEND_URL = "ai-legal-assistant-production.up.railway.app";
   // 🔥 NEW: Extract OCR text from image
   const extractOCR = async (file: File): Promise<string> => {
     try {
