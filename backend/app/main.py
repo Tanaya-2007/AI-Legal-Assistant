@@ -24,11 +24,10 @@ app = FastAPI(title="JurisClarify Backend", version="1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
+        "https://ai-legal-assistant-chi.vercel.app",
+        "https://ai-legal-assistant-9m722vw12-tanaya-pawars-projects.vercel.app",  # Add this!
         "http://localhost:5173",
-        "https://ai-legal-assistant-production.up.railway.app",
-        "https://*.railway.app",
-        "https://*.vercel.app",
+        "http://localhost:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
