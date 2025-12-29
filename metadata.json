@@ -1,0 +1,7 @@
+{
+  "name": "JurisClarify - AI Legal Assistant",
+  "description": "A sophisticated legal document analyzer that simplifies complex contracts, identifies red flags, and defines legalese for laypeople.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
