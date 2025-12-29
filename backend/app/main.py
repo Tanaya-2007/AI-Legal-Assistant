@@ -99,19 +99,8 @@ async def simplify_legal_text(data: LegalText):
         word_count = len(text.split())
         
         # Generate summary
-        # Generate summary - User friendly version
-if re.search(r'\bagreement\b', text_lower):
-    summary = "This is a legal agreement that creates binding obligations between the parties involved. "
-else:
-    summary = "This legal document establishes terms and conditions that must be followed. "
+        summary = f"This document contains approximately {word_count} words covering legal terms and obligations between parties. It outlines rights, responsibilities, and potential consequences."
 
-if re.search(r'\bobligat(?:e|ion)\b', text_lower):
-    summary += "It clearly defines what each party must do and the consequences if they don't comply. "
-
-if any(keyword in text_lower for keyword in ["termination", "breach", "liability", "penalty"]):
-    summary += "⚠️ Important: This document contains conditions that could significantly affect your rights - please review all terms carefully before signing."
-else:
-    summary += "Make sure you understand all terms before proceeding."
         # Risk detection
         risks = []
         risk_keywords = {
