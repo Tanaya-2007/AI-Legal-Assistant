@@ -32,7 +32,7 @@ const App: React.FC = () => {
     }
   };
 
-  const BACKEND_URL = "https://jurisclarify-backend.onrender.com";
+  const BACKEND_URL = "ai-legal-assistant-production.up.railway.app";
   // 🔥 NEW: Extract OCR text from image
   const extractOCR = async (file: File): Promise<string> => {
     try {
