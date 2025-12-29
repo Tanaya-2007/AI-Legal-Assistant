@@ -15,7 +15,11 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://*.vercel.app",  
+        "https://*.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,6 +27,8 @@ app.add_middleware(
 
 # ---------------- OCR SETUP ----------------
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# pytesseract.pytesseract.tesseract_cmd = 'tesseract'  
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
