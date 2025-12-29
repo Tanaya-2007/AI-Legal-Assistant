@@ -6,20 +6,15 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy backend requirements
+# Copy backend files
 COPY backend/requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend application code
-COPY backend/ .
+COPY backend/app ./app
 
-# Expose port 8080
 EXPOSE 8080
 
-# Start the application
+# No cd needed - we're already in /app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
