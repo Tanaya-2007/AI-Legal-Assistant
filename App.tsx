@@ -13,7 +13,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ocrText, setOcrText] = useState<string>("");
-  const BACKEND_URL = "ai-legal-assistant-production.up.railway.app";
+  const BACKEND_URL = "https://ai-legal-assistant-production.up.railway.app";
 
   // Auth state listener
   useEffect(() => {
