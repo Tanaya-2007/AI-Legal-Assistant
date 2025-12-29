@@ -17,18 +17,16 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://*.vercel.app",  
-        "https://*.onrender.com"
+        "https://*.vercel.app",
+        "https://*.railway.app",
+        "https://*.up.railway.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------- OCR SETUP ----------------
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-# pytesseract.pytesseract.tesseract_cmd = 'tesseract'  
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe" 
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
