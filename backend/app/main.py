@@ -98,7 +98,30 @@ async def simplify_legal_text(data: LegalText):
         word_count = len(text.split())
         
         # Generate summary
-        summary = f"This document contains approximately {word_count} words covering legal terms and obligations between parties. It outlines rights, responsibilities, and potential consequences."
+        def is_legal_document(text: str) -> bool:
+            legal_keywords = [
+                "agreement", "contract", "party", "parties", "hereby",
+                "terms", "conditions", "liability", "clause", "shall",
+                "rights", "obligations", "governing law", "warranty"
+            ]
+            text_lower = text.lower()
+            return any(keyword in text_lower for keyword in legal_keywords)
+
+        if is_legal_document(text):
+            summary = (
+                "This document explains a legal agreement between the involved parties. "
+                "It outlines responsibilities, rights, and important conditions that must be followed. "
+                "It also mentions possible consequences if the terms are not met. "
+                "The purpose of the document is to avoid misunderstandings and protect everyone involved."
+            )
+        else:
+            summary = (
+                "This document provides general information written for understanding or reference. "
+                "It explains the main ideas and important points in a clear and structured manner. "
+                "There are no legal obligations or formal rules mentioned in this document. "
+                "The content is meant to inform, educate, or describe a topic rather than enforce any agreement."
+            )
+        # summary = f"This document contains approximately {word_count} words covering legal terms and obligations between parties. It outlines rights, responsibilities, and potential consequences."
 
         # Risk detection
         risks = []
