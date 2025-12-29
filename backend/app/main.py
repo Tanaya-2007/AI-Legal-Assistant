@@ -25,10 +25,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://ai-legal-assistant-chi.vercel.app",
-        "https://*.vercel.app",
+        "http://localhost:5173",
         "https://ai-legal-assistant-production.up.railway.app",
         "https://*.railway.app",
+        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
