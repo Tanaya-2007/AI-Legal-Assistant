@@ -32,13 +32,13 @@ const App: React.FC = () => {
     }
   };
 
+  const BACKEND_URL = "https://jurisclarify-backend.onrender.com";
   // 🔥 NEW: Extract OCR text from image
   const extractOCR = async (file: File): Promise<string> => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-
-      const res = await fetch("http://127.0.0.1:8000/ocr", {
+      const res = await fetch(`${BACKEND_URL}/ocr`, {
         method: "POST",
         body: formData
       });
@@ -55,7 +55,7 @@ const App: React.FC = () => {
 
   // 🔥 NEW: Call backend to simplify text
   const simplifyText = async (text: string): Promise<LegalAnalysis> => {
-    const res = await fetch("http://127.0.0.1:8000/simplify", {
+    const res = await fetch(`${BACKEND_URL}/simplify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text })
