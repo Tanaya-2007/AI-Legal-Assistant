@@ -4,6 +4,17 @@ import { LegalAnalysis, AppState } from './types';
 import AnalysisView from './components/AnalysisView';
 import { auth, provider } from './firebaseClient';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getFirestore, collection, addDoc, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+
+const db = getFirestore();
+const BACKEND_URL = "https://YOUR-RAILWAY-URL.up.railway.app"; // CHANGE THIS!
+
+interface DocumentHistory {
+  id: string;
+  fileName: string;
+  uploadDate: Date;
+  summary: string;
+}
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(AppState.IDLE);
@@ -11,19 +22,66 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [documentHistory, setDocumentHistory] = useState<DocumentHistory[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ocrText, setOcrText] = useState<string>("");
-  const BACKEND_URL = "https://ai-legal-assistant-production.up.railway.app";
 
   // Auth state listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        await loadUserDocuments(currentUser.uid);
+      } else {
+        setDocumentHistory([]);
+      }
     });
     return () => unsubscribe();
   }, []);
 
-  // Login function
+  // Load user's document history from Firestore
+  const loadUserDocuments = async (userId: string) => {
+    try {
+      const q = query(
+        collection(db, 'documents'),
+        where('userId', '==', userId),
+        orderBy('uploadDate', 'desc')
+      );
+      const querySnapshot = await getDocs(q);
+      const docs: DocumentHistory[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        docs.push({
+          id: doc.id,
+          fileName: data.fileName,
+          uploadDate: data.uploadDate.toDate(),
+          summary: data.summary
+        });
+      });
+      setDocumentHistory(docs);
+    } catch (err) {
+      console.error("Error loading documents:", err);
+    }
+  };
+
+  // Save document to Firestore
+  const saveDocumentToFirestore = async (fileName: string, analysis: LegalAnalysis) => {
+    if (!user) return;
+    
+    try {
+      await addDoc(collection(db, 'documents'), {
+        userId: user.uid,
+        fileName: fileName,
+        summary: analysis.summary,
+        uploadDate: Timestamp.now()
+      });
+      await loadUserDocuments(user.uid);
+    } catch (err) {
+      console.error("Error saving document:", err);
+    }
+  };
+
   const login = async () => {
     try {
       await signInWithPopup(auth, provider);
@@ -33,51 +91,14 @@ const App: React.FC = () => {
     }
   };
 
-  // 🔥 NEW: Extract OCR text from image
-  const extractOCR = async (file: File): Promise<string> => {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch(`${BACKEND_URL}/ocr`, {
-        method: "POST",
-        body: formData
-      });
-
-      if (!res.ok) throw new Error("OCR failed");
-      
-      const data = await res.json();
-      return data.text || "";
-    } catch (err) {
-      console.error("OCR error:", err);
-      return "Sample legal text for analysis..."; // Fallback
-    }
-  };
-
-  // 🔥 NEW: Call backend to simplify text
-  const simplifyText = async (text: string): Promise<LegalAnalysis> => {
-    const res = await fetch(`${BACKEND_URL}/simplify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json();
-      throw new Error(errorData.error || "Simplification failed");
-    }
-
-    const data = await res.json();
-    return {
-      summary: data.summary,
-      redFlags: data.redFlags,
-      glossary: data.glossary
-    };
-  };
-
-  // Handle file upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!user) {
+      alert("Please login first to analyze documents");
+      return;
+    }
 
     if (!file.type.startsWith('image/') && !file.type.includes('pdf')) {
       setError("Please provide a high-quality scan, photo, or PDF of your legal document.");
@@ -89,15 +110,43 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      // 🔥 Step 1: Extract text using OCR
-      const extractedText = await extractOCR(file);
+      // Step 1: Extract text using OCR
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const ocrRes = await fetch(`${BACKEND_URL}/ocr`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!ocrRes.ok) {
+        const errorData = await ocrRes.json();
+        throw new Error(errorData.error || "OCR extraction failed");
+      }
+
+      const ocrData = await ocrRes.json();
+      const extractedText = ocrData.text;
       setOcrText(extractedText);
 
-      // 🔥 Step 2: Send to backend for analysis
-      const analysisResult = await simplifyText(extractedText);
+      // Step 2: Analyze with AI
+      const analyzeRes = await fetch(`${BACKEND_URL}/simplify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: extractedText })
+      });
+
+      if (!analyzeRes.ok) {
+        const errorData = await analyzeRes.json();
+        throw new Error(errorData.error || "Analysis failed");
+      }
+
+      const analysisResult = await analyzeRes.json();
       
       setAnalysis(analysisResult);
       setState(AppState.SUCCESS);
+      
+      // Save to Firestore
+      await saveDocumentToFirestore(file.name, analysisResult);
 
     } catch (err: any) {
       console.error("Analysis error:", err);
@@ -136,7 +185,7 @@ const App: React.FC = () => {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
             </span>
             <span className="text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">
-              Advanced Legal Insights
+              AI-Powered Legal Analysis
             </span>
           </div>
 
@@ -145,7 +194,7 @@ const App: React.FC = () => {
           </h1>
 
           <p className="text-slate-400 text-base md:text-xl font-light max-w-xl mx-auto leading-relaxed italic px-4">
-            "Senior AI Counsel specializing in contract demystification and risk identification."
+            "AI Counsel specializing in contract analysis and risk identification."
           </p>
 
           <div className="mt-6">
@@ -157,33 +206,69 @@ const App: React.FC = () => {
                 Login with Google
               </button>
             ) : (
-              <div className="flex items-center gap-4 bg-white/10 px-4 py-2 rounded-full backdrop-blur-md border border-white/20">
-                {user.photoURL && (
-                  <img
-                    src={user.photoURL}
-                    alt="profile"
-                    className="w-8 h-8 rounded-full border border-indigo-400"
-                  />
-                )}
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-white">
-                    {user.displayName || "User"}
-                  </p>
-                  <p className="text-[10px] text-slate-300">
-                    {user.email}
-                  </p>
+              <div className="flex flex-col items-center gap-3">
+                <div className="flex items-center gap-4 bg-white/10 px-4 py-2 rounded-full backdrop-blur-md border border-white/20">
+                  {user.photoURL && (
+                    <img
+                      src={user.photoURL}
+                      alt="profile"
+                      className="w-8 h-8 rounded-full border border-indigo-400"
+                    />
+                  )}
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-white">
+                      {user.displayName || "User"}
+                    </p>
+                    <p className="text-[10px] text-slate-300">
+                      {user.email}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => signOut(auth)}
+                    className="text-xs text-red-300 hover:text-red-400 font-bold"
+                  >
+                    Logout
+                  </button>
                 </div>
-                <button
-                  onClick={() => signOut(auth)}
-                  className="text-xs text-red-300 hover:text-red-400 font-bold"
-                >
-                  Logout
-                </button>
+                
+                {documentHistory.length > 0 && (
+                  <button
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="text-xs text-indigo-300 hover:text-indigo-200 font-semibold flex items-center gap-2"
+                  >
+                    📁 View Document History ({documentHistory.length})
+                  </button>
+                )}
               </div>
             )}
           </div>
         </div>
       </header>
+
+      {/* Document History Modal */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowHistory(false)}>
+          <div className="bg-white rounded-3xl p-8 max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-slate-900">Your Documents</h2>
+              <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-600">
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              {documentHistory.map((doc) => (
+                <div key={doc.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="font-semibold text-slate-900">{doc.fileName}</p>
+                    <p className="text-xs text-slate-500">{doc.uploadDate.toLocaleDateString()}</p>
+                  </div>
+                  <p className="text-sm text-slate-600 line-clamp-2">{doc.summary}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="flex-grow container mx-auto max-w-5xl px-4 -mt-8 md:-mt-12 pb-16 z-10">
         {state === AppState.IDLE && (
@@ -195,15 +280,21 @@ const App: React.FC = () => {
                 </svg>
               </div>
 
-              <h2 className="serif text-3xl md:text-4xl text-slate-900 mb-4 md:mb-6 font-bold text-center">Expert Document Analysis</h2>
+              <h2 className="serif text-3xl md:text-4xl text-slate-900 mb-4 md:mb-6 font-bold text-center">AI Document Analysis</h2>
 
               <div className="bg-indigo-50/40 border border-indigo-100 p-6 md:p-8 rounded-2xl max-w-2xl mb-8 md:mb-12 text-center">
                 <p className="text-slate-600 text-sm md:text-lg leading-relaxed">
-                  Submit a contract, lease, or legal letter. Our AI identifies <span className="text-indigo-700 font-bold">hidden risks</span> and decodes complex terminology into clear, multi-lingual explanations.
+                  Upload legal contracts, agreements, or letters. Our AI identifies <span className="text-indigo-700 font-bold">hidden risks</span> and explains complex terms in simple language.
                 </p>
               </div>
 
-              <label className="group relative flex flex-col items-center justify-center w-full h-48 md:h-64 border-2 border-dashed border-slate-200 rounded-3xl md:rounded-[2rem] cursor-pointer hover:border-indigo-400 hover:bg-slate-50 transition-all shadow-sm hover:shadow-lg">
+              {!user && (
+                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                  <p className="text-amber-800 text-sm">⚠️ Please login to analyze documents and save your history</p>
+                </div>
+              )}
+
+              <label className={`group relative flex flex-col items-center justify-center w-full h-48 md:h-64 border-2 border-dashed border-slate-200 rounded-3xl md:rounded-[2rem] ${user ? 'cursor-pointer hover:border-indigo-400 hover:bg-slate-50' : 'cursor-not-allowed opacity-50'} transition-all shadow-sm hover:shadow-lg`}>
                 <div className="flex flex-col items-center justify-center px-4">
                   <div className="mb-3 p-3 bg-slate-100 rounded-full group-hover:scale-110 group-hover:bg-indigo-100 transition-all duration-300">
                     <svg className="w-6 h-6 text-slate-400 group-hover:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,9 +304,16 @@ const App: React.FC = () => {
                   <p className="mb-1 text-base md:text-xl text-slate-700 font-semibold text-center">
                     <span className="text-indigo-600">Secure Upload</span>
                   </p>
-                  <p className="text-xs md:text-sm text-slate-400 text-center">PDF, Image (JPG/PNG) up to 10MB</p>
+                  <p className="text-xs md:text-sm text-slate-400 text-center">Images (JPG/PNG) up to 10MB</p>
                 </div>
-                <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf" />
+                <input 
+                  ref={fileInputRef} 
+                  type="file" 
+                  className="hidden" 
+                  onChange={handleFileUpload} 
+                  accept="image/*"
+                  disabled={!user}
+                />
               </label>
             </div>
           </div>
@@ -232,8 +330,8 @@ const App: React.FC = () => {
                 </svg>
               </div>
             </div>
-            <h3 className="serif text-2xl md:text-3xl font-bold text-slate-900 mb-2 text-center px-4">Analyzing Document...</h3>
-            <p className="text-slate-500 text-sm md:text-lg text-center px-6">Extracting text and identifying risks.</p>
+            <h3 className="serif text-2xl md:text-3xl font-bold text-slate-900 mb-2 text-center px-4">AI Analysis in Progress...</h3>
+            <p className="text-slate-500 text-sm md:text-lg text-center px-6">Extracting text and identifying risks with AI</p>
           </div>
         )}
 
@@ -244,7 +342,7 @@ const App: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="serif text-2xl md:text-3xl font-bold text-slate-900 mb-3">Analysis Interrupted</h3>
+            <h3 className="serif text-2xl md:text-3xl font-bold text-slate-900 mb-3">Analysis Failed</h3>
             <p className="text-slate-500 text-sm md:text-base mb-8 max-w-sm mx-auto">{error}</p>
             <button onClick={reset} className="w-full md:w-auto bg-slate-900 text-white px-8 py-3 rounded-xl hover:bg-slate-800 transition-all font-bold">
               Try Again
@@ -265,13 +363,14 @@ const App: React.FC = () => {
               </button>
               <div className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-2 border border-emerald-100">
                 <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                Expert Analysis Ready
+                Analysis Complete
               </div>
             </div>
 
             <AnalysisView analysis={analysis} ocrText={ocrText} />
           </div>
-        )}      </main>
+        )}
+      </main>
 
       <footer className="bg-slate-50 border-t border-slate-200 pt-16 pb-12 px-4">
         <div className="max-w-5xl mx-auto">
@@ -287,7 +386,7 @@ const App: React.FC = () => {
                 AI analysis is not a substitute for professional legal advice.
               </p>
               <p className="text-amber-800/70 text-xs md:text-sm leading-relaxed relative z-10">
-                Always consult a qualified attorney for critical decisions. JurisClarify is an accessibility tool designed to assist in understanding general concepts.
+                Always consult a qualified attorney for critical decisions.
               </p>
             </div>
 
@@ -296,25 +395,16 @@ const App: React.FC = () => {
                 <svg className="h-5 w-5 text-indigo-400" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 4.908-3.333 9.279-8 10.127a9.714 9.714 0 01-8-10.127c0-.681.056-1.35.166-2.001zm8.834 2.13a1 1 0 00-2 0v3.586L7.707 9.414a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.717V7.13z" clipRule="evenodd" />
                 </svg>
-                <h4 className="font-bold text-indigo-400 uppercase tracking-widest text-[10px]">Privacy & Data Safety</h4>
+                <h4 className="font-bold text-indigo-400 uppercase tracking-widest text-[10px]">Privacy & Security</h4>
               </div>
               <p className="text-sm md:text-base leading-relaxed mb-4 relative z-10">
-                Protected by <strong>Firebase App Check</strong>. Uploads are ephemeral and processed in secured environments.
+                Protected by <strong>Firebase Authentication</strong>. Your documents are processed securely.
               </p>
-              <div className="text-indigo-400 text-[10px] font-bold flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div>
-                TLS 1.3 ENCRYPTION ACTIVE
-              </div>
             </div>
           </div>
 
           <div className="text-slate-400 text-[10px] md:text-xs flex flex-col md:flex-row justify-between items-center gap-4">
             <p>&copy; 2025 JurisClarify. AI Legal Intelligence Systems.</p>
-            <div className="flex gap-4 md:gap-8 font-semibold uppercase tracking-wider">
-              <a href="#" className="hover:text-indigo-600 transition-colors">Privacy</a>
-              <a href="#" className="hover:text-indigo-600 transition-colors">Compliance</a>
-              <a href="#" className="text-indigo-500">Security Audit Log</a>
-            </div>
           </div>
         </div>
       </footer>
