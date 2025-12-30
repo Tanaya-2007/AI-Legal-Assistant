@@ -9,17 +9,25 @@ from PIL import Image
 import pytesseract
 from pydantic import BaseModel
 import re
-import pytesseract
-from huggingface_hub import InferenceClient
+import anthropic
+import requests
 
-# ---------------- HF CLIENT ----------------
-HF_TOKEN = os.getenv("HF_TOKEN")
-if not HF_TOKEN:
-    print("WARNING: HF_TOKEN not found in environment variables!")
-    client = None
+# ---------------- API CLIENTS ----------------
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+GROK_API_KEY = os.getenv("GROK_API_KEY")
+
+claude_client = None
+if CLAUDE_API_KEY:
+    try:
+        claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        print("✅ Claude AI client initialized")
+    except Exception as e:
+        print(f"Claude initialization failed: {e}")
+
+if GROK_API_KEY:
+    print("✅ Grok API key found")
 else:
-    client = InferenceClient(api_key=HF_TOKEN)
-    print("✅ Hugging Face client initialized")
+    print("⚠️ Grok API key not found")
 
 # ---------------- APP ----------------
 app = FastAPI()
@@ -37,15 +45,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
 # ---------------- OCR SETUP ----------------
 # Tesseract auto-detected on Railway Linux
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 @app.get("/")
 async def root():
-    return {"message": "JurisClarify API is running!", "status": "healthy"}
+    return {
+        "message": "JurisClarify API is running!",
+        "status": "healthy",
+        "ai_available": {
+            "claude": claude_client is not None,
+            "grok": GROK_API_KEY is not None
+        }
+    }
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
@@ -68,14 +81,15 @@ async def ocr(file: UploadFile = File(...)):
 class LegalText(BaseModel):
     text: str
 
-# ---------------- AI-POWERED LEGAL ANALYSIS ----------------
+# ---------------- DOCUMENT VALIDATION ----------------
 def is_legal_document(text: str) -> bool:
     """Check if document contains legal language"""
     legal_keywords = [
         'agreement', 'contract', 'party', 'parties', 'terms', 'conditions',
         'liability', 'breach', 'terminate', 'clause', 'legal', 'binding',
         'jurisdiction', 'arbitration', 'indemnify', 'warranty', 'confidential',
-        'herein', 'thereof', 'whereby', 'whereas', 'pursuant', 'notwithstanding'
+        'herein', 'thereof', 'whereby', 'whereas', 'pursuant', 'notwithstanding',
+        'obligations', 'rights', 'responsibilities', 'covenant', 'undertake'
     ]
     
     text_lower = text.lower()
@@ -84,68 +98,134 @@ def is_legal_document(text: str) -> bool:
     # Need at least 3 legal keywords
     return matches >= 3
 
-def analyze_with_ai(text: str):
-    """Use Hugging Face AI for intelligent analysis"""
+# ---------------- AI ANALYSIS WITH FALLBACK ----------------
+def analyze_with_claude(text: str):
+    """Try Claude AI first"""
+    if not claude_client:
+        raise Exception("Claude not available")
     
-    if not client:
-        raise Exception("Hugging Face API not configured. Please set HF_TOKEN environment variable.")
+    text = text[:3000]
     
-    # Truncate text for API limits
-    text = text[:2000]
+    prompt = f"""You are an expert legal analyst. Analyze this legal document and provide:
+
+1. A simple 2-3 sentence summary that anyone can understand
+2. Exactly 3 specific risk warnings (start each with ⚠️)
+
+Document text:
+{text}
+
+Provide your response in this exact format:
+
+SUMMARY:
+[Your 2-3 sentence summary here]
+
+RISKS:
+⚠️ [Risk 1]
+⚠️ [Risk 2]
+⚠️ [Risk 3]"""
+
+    message = claude_client.messages.create(
+        model="claude-3-5-haiku-20241022",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
     
-    try:
-        # Generate summary using AI
-        summary_prompt = f"""You are a legal expert. Analyze this legal document and provide a simple 2-3 sentence summary that anyone can understand. Focus on what the document is about and the main obligations.
+    response_text = message.content[0].text
+    
+    # Parse response
+    summary = ""
+    risks = []
+    
+    if "SUMMARY:" in response_text:
+        summary_section = response_text.split("SUMMARY:")[1].split("RISKS:")[0].strip()
+        summary = summary_section
+    
+    if "RISKS:" in response_text:
+        risks_section = response_text.split("RISKS:")[1].strip()
+        risk_lines = [line.strip() for line in risks_section.split('\n') if line.strip() and '⚠️' in line]
+        risks = risk_lines[:3]
+    
+    if not summary or len(summary) < 30:
+        raise Exception("Claude response too short")
+    
+    if len(risks) < 3:
+        raise Exception("Not enough risks from Claude")
+    
+    return summary, risks
+
+def analyze_with_grok(text: str):
+    """Fallback to Grok API"""
+    if not GROK_API_KEY:
+        raise Exception("Grok not available")
+    
+    text = text[:3000]
+    
+    url = "https://api.x.ai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {GROK_API_KEY}"
+    }
+    
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an expert legal analyst. Provide clear, simple analysis."
+            },
+            {
+                "role": "user",
+                "content": f"""Analyze this legal document and provide:
+
+1. A simple 2-3 sentence summary
+2. Exactly 3 specific risk warnings (start each with ⚠️)
 
 Document:
 {text}
 
-Simple Summary:"""
+Format:
+SUMMARY:
+[summary]
 
-        summary_response = client.text_generation(
-            prompt=summary_prompt,
-            model="HuggingFaceH4/zephyr-7b-beta",
-            max_new_tokens=200,
-            temperature=0.3,
-        )
-        
-        summary = summary_response.strip()
-        
-        # Generate risk analysis using AI
-        risk_prompt = f"""You are a legal risk analyst. Identify 3 specific risks or concerns in this legal document. Be specific and mention actual clauses or terms.
-
-Document:
-{text}
-
-List exactly 3 risks (one per line, start each with "⚠️"):"""
-
-        risk_response = client.text_generation(
-            prompt=risk_prompt,
-            model="HuggingFaceH4/zephyr-7b-beta",
-            max_new_tokens=300,
-            temperature=0.4,
-        )
-        
-        # Parse risks from AI response
-        risk_lines = [line.strip() for line in risk_response.split('\n') if line.strip() and '⚠️' in line]
-        risks = risk_lines[:3] if risk_lines else []
-        
-        # If AI didn't generate enough risks, add rule-based ones
-        if len(risks) < 3:
-            risks = detect_risks_rule_based(text)[:3]
-        
-        # Generate glossary
-        glossary = extract_legal_terms(text)
-        
-        return summary, risks, glossary
-        
-    except Exception as e:
-        print(f"AI Analysis Error: {str(e)}")
-        # Fallback to rule-based analysis
-        return analyze_rule_based(text)
+RISKS:
+⚠️ [risk 1]
+⚠️ [risk 2]
+⚠️ [risk 3]"""
+            }
+        ],
+        "model": "grok-beta",
+        "stream": False,
+        "temperature": 0.3
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    response.raise_for_status()
+    
+    data = response.json()
+    response_text = data['choices'][0]['message']['content']
+    
+    # Parse response
+    summary = ""
+    risks = []
+    
+    if "SUMMARY:" in response_text:
+        summary_section = response_text.split("SUMMARY:")[1].split("RISKS:")[0].strip()
+        summary = summary_section
+    
+    if "RISKS:" in response_text:
+        risks_section = response_text.split("RISKS:")[1].strip()
+        risk_lines = [line.strip() for line in risks_section.split('\n') if line.strip() and '⚠️' in line]
+        risks = risk_lines[:3]
+    
+    if not summary or len(summary) < 30:
+        raise Exception("Grok response too short")
+    
+    if len(risks) < 3:
+        raise Exception("Not enough risks from Grok")
+    
+    return summary, risks
 
 def detect_risks_rule_based(text: str):
-    """Fallback rule-based risk detection"""
+    """Rule-based risk detection as final fallback"""
     text_lower = text.lower()
     risks = []
     
@@ -171,7 +251,7 @@ def detect_risks_rule_based(text: str):
             "⚠️ Check for automatic renewal clauses or cancellation procedures."
         ]
     
-    return risks
+    return risks[:3]
 
 def extract_legal_terms(text: str):
     """Extract and define legal terms found in document"""
@@ -190,13 +270,11 @@ def extract_legal_terms(text: str):
         "Jurisdiction": "Which state or country's laws apply and where cases will be heard."
     }
     
-    # Find which terms appear in the document
     found_terms = []
     for term, definition in all_terms.items():
         if term.lower() in text_lower:
             found_terms.append({"term": term, "definition": definition})
     
-    # Always return at least 5 terms
     if len(found_terms) < 5:
         for term, definition in list(all_terms.items())[:5]:
             if {"term": term, "definition": definition} not in found_terms:
@@ -205,10 +283,7 @@ def extract_legal_terms(text: str):
     return found_terms[:5]
 
 def analyze_rule_based(text: str):
-    """Fallback analysis without AI"""
-    sentences = re.split(r'[.!?]+', text)
-    sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
-    
+    """Final fallback - rule-based analysis"""
     doc_type = "legal document"
     if "lease" in text.lower() or "rent" in text.lower():
         doc_type = "lease agreement"
@@ -217,14 +292,40 @@ def analyze_rule_based(text: str):
     elif "service" in text.lower():
         doc_type = "service agreement"
     
-    summary = f"This {doc_type} outlines the rights and responsibilities of both parties. " + \
-              f"It covers important terms including obligations, payments, and what happens if something goes wrong. " + \
-              f"Make sure you understand the cancellation terms and any penalties before signing."
+    summary = f"This {doc_type} sets out the rules and responsibilities for both parties. " + \
+              f"Before signing, make sure you understand when you can cancel, what happens if something goes wrong, and how disagreements will be resolved."
     
     risks = detect_risks_rule_based(text)
     glossary = extract_legal_terms(text)
     
     return summary, risks, glossary
+
+def analyze_with_ai(text: str):
+    """Multi-AI analysis with fallback chain"""
+    
+    # Try Claude first
+    try:
+        print("Attempting Claude AI analysis...")
+        summary, risks = analyze_with_claude(text)
+        glossary = extract_legal_terms(text)
+        print("✅ Claude AI succeeded")
+        return summary, risks, glossary
+    except Exception as e:
+        print(f"Claude failed: {str(e)}")
+    
+    # Try Grok if Claude fails
+    try:
+        print("Attempting Grok AI analysis...")
+        summary, risks = analyze_with_grok(text)
+        glossary = extract_legal_terms(text)
+        print("✅ Grok AI succeeded")
+        return summary, risks, glossary
+    except Exception as e:
+        print(f"Grok failed: {str(e)}")
+    
+    # Final fallback to rule-based
+    print("Using rule-based analysis (both AI failed)")
+    return analyze_rule_based(text)
 
 @app.post("/simplify")
 async def simplify_legal_text(data: LegalText):
@@ -237,14 +338,14 @@ async def simplify_legal_text(data: LegalText):
                 content={"error": "Text is too short. Please provide a valid document."}
             )
         
-        # Check if it's a legal document
+        # Validate it's a legal document
         if not is_legal_document(text):
             return JSONResponse(
                 status_code=400,
                 content={"error": "This doesn't appear to be a legal document. Please upload contracts, agreements, or legal letters only."}
             )
         
-        
+        # Analyze with multi-AI fallback
         summary, risks, glossary = analyze_with_ai(text)
         
         return {

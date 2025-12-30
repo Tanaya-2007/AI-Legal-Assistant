@@ -7,13 +7,15 @@ import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/aut
 import { getFirestore, collection, addDoc, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 
 const db = getFirestore();
-const BACKEND_URL = "https://YOUR-RAILWAY-URL.up.railway.app"; // CHANGE THIS!
+const BACKEND_URL = "https://ai-legal-assistant-production.up.railway.app"; // CHANGE THIS!
+// const BACKEND_URL = "http://localhost:8000";
 
 interface DocumentHistory {
   id: string;
   fileName: string;
   uploadDate: Date;
   summary: string;
+  analysis: LegalAnalysis;
 }
 
 const App: React.FC = () => {
@@ -26,6 +28,7 @@ const App: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ocrText, setOcrText] = useState<string>("");
+  const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
 
   // Auth state listener
   useEffect(() => {
@@ -56,7 +59,8 @@ const App: React.FC = () => {
           id: doc.id,
           fileName: data.fileName,
           uploadDate: data.uploadDate.toDate(),
-          summary: data.summary
+          summary: data.summary,
+          analysis: data.analysis
         });
       });
       setDocumentHistory(docs);
@@ -74,6 +78,7 @@ const App: React.FC = () => {
         userId: user.uid,
         fileName: fileName,
         summary: analysis.summary,
+        analysis: analysis,
         uploadDate: Timestamp.now()
       });
       await loadUserDocuments(user.uid);
@@ -164,6 +169,13 @@ const App: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const loadHistoryDocument = (doc: DocumentHistory) => {
+    setAnalysis(doc.analysis);
+    setFileName(doc.fileName);
+    setState(AppState.SUCCESS);
+    setShowHistory(false);
+  };
+
   return (
     <div className="min-h-screen flex flex-col selection:bg-indigo-100 selection:text-indigo-900 overflow-x-hidden">
       <header className="bg-slate-900 text-white py-12 md:py-20 px-4 shadow-2xl relative overflow-hidden">
@@ -185,7 +197,7 @@ const App: React.FC = () => {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
             </span>
             <span className="text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">
-              AI-Powered Legal Analysis
+              Advanced Legal Insights
             </span>
           </div>
 
@@ -256,15 +268,61 @@ const App: React.FC = () => {
               </button>
             </div>
             <div className="space-y-4">
-              {documentHistory.map((doc) => (
-                <div key={doc.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                  <div className="flex justify-between items-start mb-2">
-                    <p className="font-semibold text-slate-900">{doc.fileName}</p>
-                    <p className="text-xs text-slate-500">{doc.uploadDate.toLocaleDateString()}</p>
+              {documentHistory.map((doc) => {
+                const isExpanded = expandedDocs.has(doc.id);
+                const shouldTruncate = doc.summary.length > 150;
+                
+                return (
+                  <div 
+                    key={doc.id} 
+                    onClick={() => loadHistoryDocument(doc)}
+                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 cursor-pointer transition-all group"
+                  >
+                    <div className="flex justify-between items-start mb-3">
+                      <p className="font-semibold text-slate-900 text-base group-hover:text-indigo-700 transition-colors">
+                        {doc.fileName}
+                      </p>
+                      <p className="text-xs text-slate-500 whitespace-nowrap ml-3">
+                        {doc.uploadDate.toLocaleDateString()}
+                      </p>
+                    </div>
+                    
+                    <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                      {isExpanded || !shouldTruncate 
+                        ? doc.summary 
+                        : `${doc.summary.substring(0, 150)}...`
+                      }
+                    </p>
+                    
+                    <div className="flex items-center justify-between">
+                      {shouldTruncate && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newSet = new Set(expandedDocs);
+                            if (isExpanded) {
+                              newSet.delete(doc.id);
+                            } else {
+                              newSet.add(doc.id);
+                            }
+                            setExpandedDocs(newSet);
+                          }}
+                          className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
+                        >
+                          {isExpanded ? "Show less" : "Read more"}
+                        </button>
+                      )}
+                      
+                      <div className="flex items-center gap-2 text-xs text-indigo-600 font-semibold opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                        <span>Click to view full analysis</span>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-sm text-slate-600 line-clamp-2">{doc.summary}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
