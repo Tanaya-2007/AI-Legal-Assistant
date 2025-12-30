@@ -32,18 +32,26 @@ else:
 # ---------------- APP ----------------
 app = FastAPI()
 
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "http://localhost:3000",
+#         "https://*.vercel.app",
+#         "https://*.railway.app",
+#         "https://*.up.railway.app"
+#     ],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://*.vercel.app",
-        "https://*.railway.app",
-        "https://*.up.railway.app"
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],  # ✅ FIXES EVERYTHING
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ---------------- OCR SETUP ----------------
 # Tesseract auto-detected on Railway Linux
