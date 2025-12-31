@@ -9,49 +9,31 @@ from PIL import Image
 import pytesseract
 from pydantic import BaseModel
 import re
-import anthropic
 import requests
 
 # ---------------- API CLIENTS ----------------
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-claude_client = None
-if CLAUDE_API_KEY:
-    try:
-        claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-        print("✅ Claude AI client initialized")
-    except Exception as e:
-        print(f"Claude initialization failed: {e}")
-
-if GROK_API_KEY:
-    print("✅ Grok API key found")
+if GROQ_API_KEY:
+    print("✅ Groq API key found")
 else:
-    print("⚠️ Grok API key not found")
+    print("⚠️ Groq API key not found")
 
 # ---------------- APP ----------------
 app = FastAPI()
 
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "http://localhost:3000",
-#         "https://*.vercel.app",
-#         "https://*.railway.app",
-#         "https://*.up.railway.app"
-#     ],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ✅ FIXES EVERYTHING
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://*.vercel.app",
+        "https://*.railway.app",
+        "https://*.up.railway.app"
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------------- OCR SETUP ----------------
 # Tesseract auto-detected on Railway Linux
@@ -63,8 +45,7 @@ async def root():
         "message": "JurisClarify API is running!",
         "status": "healthy",
         "ai_available": {
-            "claude": claude_client is not None,
-            "grok": GROK_API_KEY is not None
+            "groq": GROQ_API_KEY is not None
         }
     }
 
@@ -107,92 +88,40 @@ def is_legal_document(text: str) -> bool:
     return matches >= 3
 
 # ---------------- AI ANALYSIS WITH FALLBACK ----------------
-def analyze_with_claude(text: str):
-    """Try Claude AI first"""
-    if not claude_client:
-        raise Exception("Claude not available")
+def analyze_with_groq(text: str):
+    """Use Groq AI - 100% FREE"""
+    if not GROQ_API_KEY:
+        raise Exception("Groq not available")
     
     text = text[:3000]
     
-    prompt = f"""You are an expert legal analyst. Analyze this legal document and provide:
-
-1. A simple 2-3 sentence summary that anyone can understand
-2. Exactly 3 specific risk warnings (start each with ⚠️)
-
-Document text:
-{text}
-
-Provide your response in this exact format:
-
-SUMMARY:
-[Your 2-3 sentence summary here]
-
-RISKS:
-⚠️ [Risk 1]
-⚠️ [Risk 2]
-⚠️ [Risk 3]"""
-
-    message = claude_client.messages.create(
-        model="claude-3-5-haiku-20241022",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = message.content[0].text
-    
-    # Parse response
-    summary = ""
-    risks = []
-    
-    if "SUMMARY:" in response_text:
-        summary_section = response_text.split("SUMMARY:")[1].split("RISKS:")[0].strip()
-        summary = summary_section
-    
-    if "RISKS:" in response_text:
-        risks_section = response_text.split("RISKS:")[1].strip()
-        risk_lines = [line.strip() for line in risks_section.split('\n') if line.strip() and '⚠️' in line]
-        risks = risk_lines[:3]
-    
-    if not summary or len(summary) < 30:
-        raise Exception("Claude response too short")
-    
-    if len(risks) < 3:
-        raise Exception("Not enough risks from Claude")
-    
-    return summary, risks
-
-def analyze_with_grok(text: str):
-    """Fallback to Grok API"""
-    if not GROK_API_KEY:
-        raise Exception("Grok not available")
-    
-    text = text[:3000]
-    
-    url = "https://api.x.ai/v1/chat/completions"
+    url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {GROK_API_KEY}"
+        "Authorization": f"Bearer {GROQ_API_KEY}"
     }
     
     payload = {
+        "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "system",
-                "content": "You are an expert legal analyst. Provide clear, simple analysis."
+                "content": "You are an expert legal analyst. Provide clear, concise analysis."
             },
             {
                 "role": "user",
-                "content": f"""Analyze this legal document and provide:
+                "content": f"""Analyze this legal document:
 
-1. A simple 2-3 sentence summary
-2. Exactly 3 specific risk warnings (start each with ⚠️)
-
-Document:
 {text}
 
-Format:
+Provide exactly:
+1. A simple 2-3 sentence summary
+2. 3 specific risk warnings (each starting with ⚠️)
+
+Format your response as:
+
 SUMMARY:
-[summary]
+[your summary here]
 
 RISKS:
 ⚠️ [risk 1]
@@ -200,13 +129,15 @@ RISKS:
 ⚠️ [risk 3]"""
             }
         ],
-        "model": "grok-beta",
-        "stream": False,
-        "temperature": 0.3
+        "temperature": 0.3,
+        "max_tokens": 500
     }
     
     response = requests.post(url, headers=headers, json=payload, timeout=30)
-    response.raise_for_status()
+    
+    if response.status_code != 200:
+        print(f"Groq API Error: {response.text}")
+        raise Exception(f"Groq API failed: {response.status_code}")
     
     data = response.json()
     response_text = data['choices'][0]['message']['content']
@@ -225,10 +156,10 @@ RISKS:
         risks = risk_lines[:3]
     
     if not summary or len(summary) < 30:
-        raise Exception("Grok response too short")
+        raise Exception("Groq response too short")
     
     if len(risks) < 3:
-        raise Exception("Not enough risks from Grok")
+        raise Exception("Not enough risks from Groq")
     
     return summary, risks
 
@@ -309,30 +240,20 @@ def analyze_rule_based(text: str):
     return summary, risks, glossary
 
 def analyze_with_ai(text: str):
-    """Multi-AI analysis with fallback chain"""
+    """AI analysis with Groq (FREE) fallback to rule-based"""
     
-    # Try Claude first
+    # Try Groq AI (FREE!)
     try:
-        print("Attempting Claude AI analysis...")
-        summary, risks = analyze_with_claude(text)
+        print("Attempting Groq AI analysis...")
+        summary, risks = analyze_with_groq(text)
         glossary = extract_legal_terms(text)
-        print("✅ Claude AI succeeded")
+        print("✅ Groq AI succeeded")
         return summary, risks, glossary
     except Exception as e:
-        print(f"Claude failed: {str(e)}")
+        print(f"Groq failed: {str(e)}")
     
-    # Try Grok if Claude fails
-    try:
-        print("Attempting Grok AI analysis...")
-        summary, risks = analyze_with_grok(text)
-        glossary = extract_legal_terms(text)
-        print("✅ Grok AI succeeded")
-        return summary, risks, glossary
-    except Exception as e:
-        print(f"Grok failed: {str(e)}")
-    
-    # Final fallback to rule-based
-    print("Using rule-based analysis (both AI failed)")
+    # Fallback to rule-based
+    print("Using rule-based analysis (Groq failed)")
     return analyze_rule_based(text)
 
 @app.post("/simplify")
