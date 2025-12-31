@@ -7,7 +7,7 @@ import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/aut
 import { getFirestore, collection, addDoc, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 
 const db = getFirestore();
-const BACKEND_URL = "https://ai-legal-assistant-production.up.railway.app"; // CHANGE THIS!
+const BACKEND_URL = "https://ai-legal-assistant-production.up.railway.app"; 
 // const BACKEND_URL = "http://localhost:8000";
 
 interface DocumentHistory {
